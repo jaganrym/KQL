@@ -1,0 +1,16 @@
+//Use case how fast cases are picked up
+
+DetectiveCases
+| where EventType == 'CaseOpened' //Keeps only rows where a case was opened.
+| project CaseOpened = Timestamp, CaseId //Renames Timestamp → CaseOpened, Keeps only CaseOpened (time when case was opened) and CaseId
+| join kind=inner //  Join with "CaseAssigned" events
+//Filters only "CaseAssigned" events Groups by CaseId Finds the earliest assignment timestamp for each case:
+    (
+    DetectiveCases
+    | where EventType == 'CaseAssigned'
+    | summarize FirstAssigned=min(Timestamp) by CaseId)
+    on CaseId
+// now we have Each CaseId and The first time it was assigned
+| summarize Average=avg(FirstAssigned - CaseOpened)
+
+// Final Result Average Time cases are pickedup
