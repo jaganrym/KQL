@@ -1,0 +1,61 @@
+//This KQL Query Creates Dashboard on how many email delivered, in that how may quaratine, How many Zapped Etc.,
+let selfsend=
+EmailEvents
+| where SenderFromAddress == RecipientEmailAddress 
+    or SenderFromAddress in ("ap@stellarlife.com", "emailservices@stellarlife.com")
+| where SenderFromAddress != "umesh.gade@stellarlife.com"
+| where Subject !has "Shift Handover"
+| extend auth = parse_json(AuthenticationDetails)
+| where tostring(auth.SPF) =~ "fail"
+// join with post-delivery actions
+| join kind=leftouter (
+    EmailPostDeliveryEvents
+    | project NetworkMessageId, ActionType
+) on NetworkMessageId
+// summarize 
+|summarize SelfSend_Quarantined=countif(DeliveryLocation == "Quarantined" and DeliveryAction == "Blocked"),
+            SelfSend_Inbox=countif(DeliveryLocation == "Inbox/folder"and DeliveryAction == "Delivered");
+let EmailMetrics =
+EmailEvents
+| where EmailDirection == "Inbound"
+| summarize arg_max(TimeGenerated, *) by InternetMessageId, RecipientEmailAddress
+| summarize
+    TotalEmails = count(),
+    quarantinedemails = countif(DeliveryLocation == "Quarantine");
+                                        //get total email count and quarantined email count.
+let InitialThreatMetrics =
+EmailEvents
+| summarize arg_min(TimeGenerated, *) by NetworkMessageId, RecipientEmailAddress
+| summarize
+    initiallyinboxedphish =
+        countif(DeliveryAction == "Delivered" and DeliveryLocation == "Inbox/Folder"
+            and ThreatTypes has "Phish"),
+    initiallyinboxedmalware =
+        countif(DeliveryAction == "Delivered" and DeliveryLocation == "Inbox/Folder"
+            and ThreatTypes has "Malware");
+                        // get inboxed phish and malware email count
+let PostDeliveryMetrics =
+EmailPostDeliveryEvents
+| summarize
+    Phish_ZAP = countif(ActionType == "Phish ZAP"),
+    Malware_ZAP = countif(ActionType == "Malware ZAP"),
+    Manual_Remediation_Delete = countif(ActionType == "Manual Remediation" and Action has "delete"),
+    Manual_Remediation_Release = countif(ActionType == "Manual Remediation" and Action has "release"),
+    Manual_Remediation_SelfRelease = countif(ActionType == "Manual Remediation" and Action has "release" and ActionTrigger has "User");
+            //get phish zap and malware zap and manual remediation
+EmailMetrics
+| extend JoinKey = 1
+| join kind=inner (
+    InitialThreatMetrics
+    | extend JoinKey = 1
+) on JoinKey
+| join kind=inner (
+    PostDeliveryMetrics
+    | extend JoinKey = 1
+) on JoinKey
+| join kind=inner (
+selfsend
+| extend JoinKey = 1
+) on JoinKey
+| project-away JoinKey, JoinKey1, JoinKey2, JoinKey3
+//join all the logic on a dummy
